@@ -1,0 +1,623 @@
+#Department of Chemical Engineering
+#Faculty of Engineering
+#University of Waterloo
+#December 2, 2025
+
+#AJ = Arleen Johal, 21206994
+#AK = Areebah Khokhar
+#NKC = Natejvir Kaur Chahal, 21203534
+
+#AREEBAH SECTION
+#AK: Importing necessary python modules required for the game to handle graphics, sounds, numbers and all other required functions. 
+import csv
+import random
+import sys
+import random
+from itertools import cycle
+
+import pygame
+from pygame.locals import QUIT, KEYDOWN, K_ESCAPE, K_SPACE, K_UP
+
+import numpy as np
+
+#AK: Sets a seed for NumPy's pseudo-random number generator (to repeat numbers the same way each time) in order to make the randomness of the game predictable & have similar behavour. 
+np.random.seed(1)
+
+#AK: Display settings for the game such as, screenwidth and screenheight. The values set the size of the display window to control what exactly the player sees. 
+FPS = 500
+SCREENWIDTH  = 288
+SCREENHEIGHT = 512
+#AK: The distance between the lower and upper pipe, controlling how the overall difficulty of the game as well. 
+PIPEGAPSIZE  = 100 
+#AK: Where the bottom/grass is located on the screen so that the bird knows where the gradd is located if it falls. 
+BASEY        = SCREENHEIGHT * 0.79
+
+#AK: Dictionary for images, sound and hitmask variables in one place for easy access 
+IMAGES, SOUNDS, HITMASKS = {}, {}, {}
+
+#AK: Variables for the games learning system to control how the reinforcement learning system behaves (ex. how rewards or penalities are gived) 
+"""
+learning
+"""
+statefile="state"
+#AK: Flappy birds learning rate that essentially determines how fast the system learns as the game progresses. 
+alpha=1
+#AK: Consideration of future rewards to be just as important as immediate rewards. 
+gamma=1
+#AK: Reward for surviving 
+survivereward = 1
+#AK: Punishment for dying 
+deadreward = -200
+#AK: Reward for passing a set of pipes
+passreward = 1
+#AK: The birds memory of siutations and its performance, where the qmatrix stores all actions and how "good" the actions turned out 
+Qmatrix={}
+#AK: Keeps track of high score while the game progresses
+maxscore = 0
+#AK: Counts total number of games that have been played
+wholecount = 0
+#AK: Interval after which the time of the game updates that controls how often the game updates itself 
+checktime=1
+#AK: To define pixel value used for movement speed, size, or spacing, determining the amount the bird/pipes move 
+pix=10
+#AK: Flappy bird will only perform actions that it knows, it will never take random actions
+epsilon=0
+#AK: The amount by which epsilon is reduced 
+eps_dec=0.0001
+
+# list of all possible players (tuple of 3 positions of flap)
+#AK: List of all possible bird displays/designs (there are 3 different wing positions) 
+PLAYERS_LIST = (
+    # red bird
+    (
+        'assets/sprites/redbird-upflap.png',
+        'assets/sprites/redbird-midflap.png',
+        'assets/sprites/redbird-downflap.png',
+    ),
+    # blue bird
+    (
+        # amount by which base can maximum shift to left
+        'assets/sprites/bluebird-upflap.png',
+        'assets/sprites/bluebird-midflap.png',
+        'assets/sprites/bluebird-downflap.png',
+    ),
+    # yellow bird
+    (
+        'assets/sprites/yellowbird-upflap.png',
+        'assets/sprites/yellowbird-midflap.png',
+        'assets/sprites/yellowbird-downflap.png',
+    ),
+)
+
+#AK: List if all the possible backgrounds (day or night), this function stores day & night backgrounds and later randomly picks one 
+BACKGROUNDS_LIST = (
+    'assets/sprites/background-day.png',
+    'assets/sprites/background-night.png',
+)
+
+#AK: List of all the possible pipe designs (red or green), which are essentially the same 
+PIPES_LIST = (
+    'assets/sprites/pipe-green.png',
+    'assets/sprites/pipe-red.png',
+)
+
+#AK: Ensures xrange is compatible with Python 2 & Python 3 
+try:
+    xrange
+except NameError:
+    xrange = range
+
+
+def main():
+    global SCREEN, FPSCLOCK
+    pygame.init()
+    FPSCLOCK = pygame.time.Clock()
+    #AK: Creates the window/display for the game, opening the game so everything is shown and updated 
+    SCREEN = pygame.display.set_mode((SCREENWIDTH, SCREENHEIGHT))
+    #AK: Displays the title at the top of the screen "Flappy Bird"
+    pygame.display.set_caption('Flappy Bird')
+
+    #AK: Number images to display the players score with digits from 0 to 9. 
+    IMAGES['numbers'] = (
+        pygame.image.load('assets/sprites/0.png').convert_alpha(),
+        pygame.image.load('assets/sprites/1.png').convert_alpha(),
+        pygame.image.load('assets/sprites/2.png').convert_alpha(),
+        pygame.image.load('assets/sprites/3.png').convert_alpha(),
+        pygame.image.load('assets/sprites/4.png').convert_alpha(),
+        pygame.image.load('assets/sprites/5.png').convert_alpha(),
+        pygame.image.load('assets/sprites/6.png').convert_alpha(),
+        pygame.image.load('assets/sprites/7.png').convert_alpha(),
+        pygame.image.load('assets/sprites/8.png').convert_alpha(),
+        pygame.image.load('assets/sprites/9.png').convert_alpha()
+    )
+
+    #AK: Display to indicate that the game is over when the player crashes/fails
+    IMAGES['gameover'] = pygame.image.load('assets/sprites/gameover.png').convert_alpha()
+    #AK: Display for welcoming player to the game
+    IMAGES['message'] = pygame.image.load('assets/sprites/message.png').convert_alpha()
+    #AK: Display for the ground
+    IMAGES['base'] = pygame.image.load('assets/sprites/base.png').convert_alpha()
+
+    #AK: Depending on the device the player is using, this chooses a sound file to play 
+    if 'win' in sys.platform:
+        soundExt = '.wav'
+    else:
+        soundExt = '.ogg'
+        
+    #AK: Plays sound effects in the game 
+    SOUNDS['die']    = pygame.mixer.Sound('assets/audio/die' + soundExt)
+    SOUNDS['hit']    = pygame.mixer.Sound('assets/audio/hit' + soundExt)
+    SOUNDS['point']  = pygame.mixer.Sound('assets/audio/point' + soundExt)
+    SOUNDS['swoosh'] = pygame.mixer.Sound('assets/audio/swoosh' + soundExt)
+    SOUNDS['wing']   = pygame.mixer.Sound('assets/audio/wing' + soundExt)
+    
+    #AK: A loop that restarts the game automatically once it has ended 
+    while True:
+        #AK: Selects a random background that can be either night or day 
+        randBg = 0
+        IMAGES['background'] = pygame.image.load(BACKGROUNDS_LIST[randBg]).convert()
+
+        #AK: Selects a random bird display (between 3 positions, either red, blue or yellow) 
+        randPlayer = 0
+        IMAGES['player'] = (
+            pygame.image.load(PLAYERS_LIST[randPlayer][0]).convert_alpha(),
+            pygame.image.load(PLAYERS_LIST[randPlayer][1]).convert_alpha(),
+            pygame.image.load(PLAYERS_LIST[randPlayer][2]).convert_alpha(),
+        )
+
+        #AK: Selects random pipes (either red or green) to display (the top pipe is the bottom just rotated)
+        pipeindex = 0
+        IMAGES['pipe'] = (
+            pygame.transform.rotate(
+                pygame.image.load(PIPES_LIST[pipeindex]).convert_alpha(), 180),
+            pygame.image.load(PIPES_LIST[pipeindex]).convert_alpha(),
+        )
+
+        # hismask for pipes
+        #AK: Makes hitmasks that allows the game to detect when pixels collide with each other (ex. flappy bird hitting the pipe) 
+        HITMASKS['pipe'] = (
+            getHitmask(IMAGES['pipe'][0]),
+            getHitmask(IMAGES['pipe'][1]),
+        )
+
+        HITMASKS['player'] = (
+            getHitmask(IMAGES['player'][0]),
+            getHitmask(IMAGES['player'][1]),
+            getHitmask(IMAGES['player'][2]),
+        )
+        #AK: Displays the starting screen that welcomes the player before the game has begun 
+        movementInfo = showWelcomeAnimation()
+        #AK: Begins the main game
+        crashInfo = mainGame(movementInfo)
+        #showGameOverScreen(crashInfo)
+
+
+def showWelcomeAnimation():
+    """Shows welcome screen animation of flappy bird"""
+    # index of player to blit on screen
+    #AK: Determines which position of the bird will be displayed (out of its three wing positions) 
+    playerIndex = 0
+    playerIndexGen = cycle([0, 1, 2, 1])
+    loopIter = 0
+    
+    #AK: Where the bird and message are initially located on the display screen by setting x and y locations of the bird 
+    playerx = int(SCREENWIDTH * 0.2)
+    playery = int((SCREENHEIGHT - IMAGES['player'][0].get_height()) / 2)
+
+    messagex = int((SCREENWIDTH - IMAGES['message'].get_width()) / 2)
+    messagey = int(SCREENHEIGHT * 0.12)
+
+    basex = 0
+
+    #AK: Moves the background images sideways to create a display that has the ground passing/scrolling by smoothly
+    baseShift = IMAGES['base'].get_width() - IMAGES['background'].get_width()
+
+    #AK: How much the bird animation floats up and down on the welcome screen
+    playerShmVals = {'val': 0, 'dir': 1}
+
+
+    #AK: Frequently updates the birds animation by cycling the birds wings every so often 
+    if (loopIter + 1) % 5 == 0:
+        playerIndex = next(playerIndexGen)
+    loopIter = (loopIter + 1) % 30
+    basex = -((-basex + 4) % baseShift)
+    #AK: Allows the bird to float upwards & downwards
+    playerShm(playerShmVals)
+    #AK: Draws all the sprites on the screen 
+    SCREEN.blit(IMAGES['background'], (0,0))
+    SCREEN.blit(IMAGES['player'][playerIndex],
+                (playerx, playery + playerShmVals['val']))
+    SCREEN.blit(IMAGES['message'], (messagex, messagey))
+    SCREEN.blit(IMAGES['base'], (basex, BASEY))
+
+    pygame.display.update()
+    FPSCLOCK.tick(FPS)
+
+    #AK: Returns the birds position at the start of each game
+    return {
+        'playery': playery + playerShmVals['val'],
+        'basex': basex,
+        'playerIndexGen': playerIndexGen,
+        'playerIndex': playerIndex
+    }
+
+#ARLEEN'S SECTION 
+def mainGame(movementInfo): #AJ: first, we need to change the global variables so that the function can update them. 
+    global wholecount,maxscore,epsilon #AJ: the wholecount is the total games played, the max score is the highest score in the game, and the eplison (changes over time) is what controls the exploration rate (essentially it is a value between 0 and 1 and represents the probability of chosing a random action) 
+
+    score = loopIter = 0 #AJ: the will tracks how many pipes the player has passed which is important for score. It also controls the way the bird flaps in each frame so that the animation stays smooth. 
+    playerIndexGen = movementInfo['playerIndexGen'] #AJ: this will cycle through the birds flap frames to showcase the bird flapping 
+    playerIndex =movementInfo['playerIndex'] #AJ: this will show the current frame of the flapping animation and determines which image to show. 
+    playerx, playery = int(SCREENWIDTH * 0.2), movementInfo['playery'] #AJ: this is the vertical starting position from the welcome screen image (ensures that the flapping looks continious)
+
+    basex = movementInfo['basex']#AJ: this is the horizontal offset of the ground and this is to ensure that as the animation runs, it looks smooth across the screen
+    baseShift = IMAGES['base'].get_width() - IMAGES['background'].get_width() #AJ: this line of code is meant to get the max distance the ground moves before it loops
+
+    # get 2 new pipes to add to upperPipes lowerPipes list
+    newPipe1 = getRandomPipe() #AJ: this is a pair of pipes that is generated with a random height betweens so that it creates some level of difficulty and unexpected collisions for the user to get through them. 
+    newPipe2 = getRandomPipe() #AJ: this is a second pair of pipes to ensure spacing between as long as the game continues 
+
+    # list of upper pipes
+    upperPipes = [ #AJ: in this list of dictionaries, the upper pipe movement and collision with these pipes is stored in here 
+        {'x': SCREENWIDTH, 'y': newPipe1[0]['y']}, #AJ: the first pipe at the top is placed to the right of the screen but a little off so that as the game runs, it scrolls in 
+        {'x': SCREENWIDTH + (SCREENWIDTH / 2), 'y': newPipe2[0]['y']}, #AJ: this is the second pipe and it placed to the right to keep spacing 
+    ]
+
+    # list of lowerpipe
+    lowerPipes = [ #AJ: in this list of dictionaries, the bottom pipe movement and collision with these pipes is stored in here 
+        {'x': SCREENWIDTH, 'y': newPipe1[1]['y']},#AJ: the bottom pipe of pipe 1 aligns vertically with the upper one 
+        {'x': SCREENWIDTH + (SCREENWIDTH / 2), 'y': newPipe2[1]['y']},#AJ: this is the second pipe located at the bottom to ensure it gets paired with the top one
+    ]
+
+    pipeVelX = -4 #AJ: this variable is meant to store the value as which the pipes moves. they move left towards the player at a speed of 4 which is why the value is negative. 
+
+    # player velocity, max velocity, downward accleration, accleration on flap
+    playerVelY    =  -9   # AJ: this is the starting speed (along Y) so the birds floats upward (default same as playerFlapped)
+    playerMaxVelY =  10   # AJ: this is the max speed (along the Y) that the bird can go so that the bird does not fall to fast(max descend speed)
+    playerMinVelY =  -8   # #AJ: this is the minimum speed (along the Y)  that the bird can go so that the bird moves smoothly and does not go off-screen(max ascend speed)
+    playerAccY    =   1   # AJ: this is the players downward accleration (which means that the birds falls faster unless it is flapping)
+    playerRot     =  45   # #AJ: this is the player's rotation, which means that the birds tilts upwards 
+    playerVelRot  =   3   # #AJ: this is the angular speed of the bird, which means the bird rotates down as it begins falling to add some natural effect
+    playerRotThr  =  20   # AJ: this is the rotation threshold allowed and this keeps the bird for over-rotating. it is meant for the visual aspect of the game
+    playerFlapAcc =  -9   # AJ: this is the players speed on flapping, and so if it is negative, the bird flaps upward
+    playerFlapped = False # AJ: this boolean variable checks whether the bird is flapping and it is True when player flaps
+
+    pipew=IMAGES['pipe'][0].get_width() #AJ: this is the width of the pipe image so that it can calculate the distance and if the bird collides with it. 
+    playerw=IMAGES['player'][0].get_width() #AJ: this gets the width of the bird to ensure that checks whether or not the bird collided with a pipe as well the height between the pipes
+    playerh=IMAGES['player'][0].get_height() #AJ: this is the height of the bird to check if the bird collides with any of the pipes 
+
+    count = 0 #AJ: this is a count variable and is meant to check to be used as a frame counter. 
+    pipepass=False #AJ: this checks whether or not the bird passed a pipe so that the score can be adjusted and only allows the birds to score once for that particular pipe
+    dx = int(lowerPipes[0]['x'] + pipew - (playerx + playerw))  #AJ: this is get the horizontal distance from the bird to the first bottom pipe and says how far untill the bird is from the pipe. this is important between the bird flaps at the right time before hitting it 
+    dy = int(lowerPipes[0]['y'] - (playery + playerh)) #AJ: this is meant to check the vertical distance between the bird and the height between the pipes 
+    dx = dx / pix #AJ: this reduces the horzontal distance 
+    dy = dy / pix #AJ: this is meant to reduce the vertical distance. if it is positive and big, the gap is below the bird and if it is negative, the bird must flap up 
+    dist = (dx, dy) #AJ: this is to combine the vertical and horizontal distances into one state which means it checks the bird's position relative to the pipe
+    last=dist #AJ: this will save the current state as the last state and so in the next frame, the last and current state will be compared. this means it will update whether the bird passed the pipe or collided. 
+
+    while True: #AJ: this is tyhe main game loop that will run until the bird collides with any pipe 
+        count += 1 #AJ: this is meant to track the timing of the frames and increase it 
+        for event in pygame.event.get(): #AJ: in this for loop, it gets all the events from the keyboard and system so like any key press 
+            if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):#AJ: if the user chooses to type quit or presses the escape key and keydown, then..
+                with open(statefile,'wb') as wf: 
+                    w=csv.writer(wf) #AJ: it will create a csv writer object 
+                    w.writerows(Qmatrix.items()) #AJ: this will write the q-table entries into the file. the q table is basically a matrix where there is a row for every state and column for every action.  
+                with open("score.csv",'wb') as wf: #AJ: this opens the score file to save the best score in the game and the totle games 
+                    w=csv.writer(wf) #AJL this will create a csv write object for the score file 
+                    w.writerow((maxscore,wholecount)) #AJ: this is to store the highest score and the total games the user played 
+                pygame.quit() #AJ: this will close pygame
+                sys.exit() #AJ: this exits out of the python program 
+
+        playerMidPos = playerx #AJ: this variable here will store where bird is located horionzontally (its x position) so that it is easy to identify which pipe is next 
+        # update last state 
+        for pipe in lowerPipes: #AJ: this for loop will go through all of the lower pipes to find the one that is in front of the bird 
+            pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width() #AJ: this is calculate the position of the pipe  on the right (located on the edge's x)
+            if playerMidPos < pipeMidPos: #AJ: this checks if this the pipe if in front of the bird 
+                break #AJ: if it is, the it breaks the loop because the next pipe if needed for distance 
+
+        dx = int(pipe['x'] + pipew - (playerx + playerw)) #AJ: this will check the horizontal distance to the next pipe again 
+        dy = int(pipe['y'] - (playery + playerh)) #AJ: this will check the vertical distance to that same pipe again 
+        dx = dx / pix #AJ: this reduces the horzontal distance 
+        dy = dy / pix #AJ: this is meant to reduce the vertical distance. if it is positive and big, the gap is below the bird and if it is negative, the bird must flap up 
+        dist = (dx, dy) #AJ: this is to combine the vertical and horizontal distances into one state which means it checks the bird's position relative to the pipe
+        if dist not in Qmatrix: #AJ: this checks if the state was not seen before 
+            Qmatrix[dist] = [0, 0] #AJ: this creates two values including one for where the bird is flapping and not flapping and it sets it to zero
+        if np.random.uniform()<epsilon: #AJ: if the epsilon is greater, it will choose a random action. 
+            action=np.random.randint(2) #AJ: it will choose between 0 which would be no flapping and 1 which would be flapping 
+        else: #AJ: if not, then it will choose an action that is best 
+            action = Qmatrix[dist].index(max(Qmatrix[dist])) #AJ: it will pick an action that has the highest q-value
+        epsilon=max(epsilon-eps_dec,0) #AJ: this will decrease the explorate rate 
+        if action == 1: #AJ: this checks if flap is chosen as the action 
+            if playery > -2 * IMAGES['player'][0].get_height(): #AJ: this is to ensure that the bird it not located too high on the screen and can still flap 
+                playerVelY = playerFlapAcc #AJ: this allows the bird to jump and it is the same as the bird's upward speed
+                playerFlapped = True #AJ: this is True, which means that the bird has flapped for this frame
+
+
+        # playerIndex basex change
+        if (loopIter + 1) % 3 == 0: #AJ: this is meant to take the frames (finds modulus and ensures it is divisble by 3 and leaves no remainders) and checks if next piece of code will run for every three frames
+            playerIndex = next(playerIndexGen) #AJ: this variable will change the wing frame to ensure that the flapping happens smoothly 
+        loopIter = (loopIter + 1) % 30 #AJ: this will essentially ensure that the animation continues 
+        basex = -((-basex + 4) % baseShift) #AJ: this will ensure that the image of the ground scrolls to the left by 4. this is done by finding the modulus
+
+        # rotate the player
+        if playerRot > -90: #AJ: this will check if the bird is not tilted downwards too much
+            playerRot -= playerVelRot #AJ: this will will increase the rotation to ensure it does not fall too fast 
+
+        # player's movement
+        if playerVelY < playerMaxVelY and not playerFlapped: #AJ: this will check if the bird is not flapping and not at its max speed along y
+            playerVelY += playerAccY #AJ: this will increase the bird's downward speed 
+        if playerFlapped: #AJ: this if statement checks if a flap happeneds during this frame
+            playerFlapped = False #AJ: this will reset that next flap frame so that gravity can still work normally 
+
+            # more rotation to cover the threshold (calculated in visible rotation)
+            playerRot = 45 #AJ: this will tily the bird up so that it can look like that it is flapping upwards 
+
+        playerHeight = IMAGES['player'][playerIndex].get_height() #AJ: this will get the current sprite height but it will depend on the animation frame
+        playery += min(playerVelY, BASEY - playery - playerHeight) #AJ: this will update the vertical position but ensure the bird does not fall through the ground 
+
+        # move pipes to left
+        for uPipe, lPipe in zip(upperPipes, lowerPipes): #AJ: this will move the pipes to the left by looping them together  
+            uPipe['x'] += pipeVelX #AJ: this will move the top pipe to the left by the speed of the pipe 
+            lPipe['x'] += pipeVelX #AJ: this will move the bottom pipe to the left by the speed of the pipe
+
+        # add new pipe when first pipe is about to touch left of screen
+        if 0 < upperPipes[0]['x'] < 5: #AJ: this checks if the first pipe are entering the screen
+            newPipe = getRandomPipe() #AJ: this will create a new sets of pipes 
+            upperPipes.append(newPipe[0]) #AJ: this will add the new upper pipe to the end of the list 
+            lowerPipes.append(newPipe[1])#AJ: this will add the new lower pipe to the end of the list 
+
+        # remove first pipe if its out of the screen
+        if upperPipes[0]['x'] < -IMAGES['pipe'][0].get_width(): #AJ: if the first pipe is off-screen 
+            upperPipes.pop(0) #AJ: this will remove that upper pipe to free some memory 
+            lowerPipes.pop(0) #AJ: this will remove that lower pipe to free some memory 
+
+        # draw sprites
+        SCREEN.blit(IMAGES['background'], (0, 0)) #AJ: this is meant to draw the background so that everything else of the screen is on top 
+
+        for uPipe, lPipe in zip(upperPipes, lowerPipes): #AJ: this will draw  the pair of pipes in the game 
+            SCREEN.blit(IMAGES['pipe'][0], (uPipe['x'], uPipe['y'])) #AJ: this is draw the upper pippe at its position
+            SCREEN.blit(IMAGES['pipe'][1], (lPipe['x'], lPipe['y'])) #AJ: this will draw the lower pipe to match the upper one 
+
+        SCREEN.blit(IMAGES['base'], (basex, BASEY)) #AJ: this will show the ground moving to that creates a visual effect for the user 
+        # print score so player overlaps the score
+        showScore(score) #AJ: this will allow the player to see how much they scored in the game
+
+        # Player rotation has a threshold
+        visibleRot = playerRotThr #AJ: this will set the rotation for the bird 
+        if playerRot <= playerRotThr: #AJ: this will check if the rotation is less than the defalut limit 
+            visibleRot = playerRot #AJ: if it ism then it will use the bird's rotation so it adds a natural effect to the game 
+        
+        #AJ: the code below will just draw the bird and and rotate it according to its current position and the way it is moving 
+        playerSurface = pygame.transform.rotate(IMAGES['player'][playerIndex], visibleRot)
+        SCREEN.blit(playerSurface, (playerx, playery)) 
+
+        pygame.display.update() #AJ: this will show the bird's rotation to the screen so that the user can see the way the bird moves 
+
+        # check for crash here
+        crashTest = checkCrash({'x': playerx, 'y': playery, 'index': playerIndex},
+                               upperPipes, lowerPipes) #AJ: this is calling a function called checkCrash to check whether or not a bird hit a pipe or the ground by send the bird's x and y position and the list of the upper and lower pipes as arguments
+        if crashTest[0]: #AJ: if the crashTest has True in its first index, the bird hit something 
+            reward=deadreward #AJ: this variable is meant to not give a reward 
+            wholecount += 1 #AJ: this means that number of games player increases 
+        else: #AJ: this will check if there was no crash
+            reward=survivereward #AJ: there will be a reward for surviving so that the user has some sort fo reward 
+            # check for score
+            playerMidPos = playerx + IMAGES['player'][0].get_width() / 2 #AJ: this will check the  x poistion of the bird compared to the height 
+            for pipe in upperPipes: #AJ: this for loop will check if the bird passed through an upper pipe 
+                pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width() / 2 #AJ: it will theen take the x position of that current pipe
+                if pipeMidPos <= playerMidPos < pipeMidPos + 4: #AJ: this will check to see if the bird bassed through the pipe
+                    score += 1 #AJ: if it did, then the score inctease by 1 
+                    if score > maxscore: #AJ: this will check if the  score is greater than the current highest score
+                        maxscore = score#AJ: this will replace the score as the maxscore 
+                        with open(statefile, 'wb') as wf: #AJ: this will open the file to save the q-table 
+                            w = csv.writer(wf) #AJ: it will create a csv writer object 
+                            w.writerows(Qmatrix.items()) #AJ: this will save the q-table to keep track 
+                    pipepass=True #AJ: this is True because it means that the bird passed a pipe 
+                    reward=passreward #AJ: the reward variable also give a reward for passing a pipe
+                    #SOUNDS['point'].play() 
+        """
+        update
+        """
+        playerMidPos = playerx #AJ: this will check the bird's horiozontal distance 
+        # update last state
+       #AJ: this for loop is meant to check to see if there is another pipe ahead and if there is then we break the loop and that pipe will be used to check the new state
+        for pipe in lowerPipes:
+            pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width()
+            if playerMidPos < pipeMidPos:
+                break
+
+        dx = int(pipe['x'] + pipew - (playerx + playerw)) #AJ: this will check the horizontal distance to the next pipe again 
+        dy = int(pipe['y'] - (playery + playerh)) #AJ: this will check the vertical distance to that same pipe again 
+        dx = dx / pix #AJ: this reduces the horzontal distance 
+        dy = dy / pix  #AJ: this is meant to reduce the vertical distance. if it is positive and big, the gap is below the bird and if it is negative, the bird must flap up 
+        dist = (dx, dy) #AJ: this is to combine the vertical and horizontal distances into one state which means it checks the bird's position relative to the pipe
+        if dist not in Qmatrix: #AJ: this checks if the state was not seen before 
+            Qmatrix[dist] = [0, 0] #AJ: this creates two values including one for where the bird is flapping and not flapping and it sets it to zero
+       
+        #AJ: this will find the max q -value for the new state and update it and so it checks whether the previous action was good based on what happenend 
+        maxnewstate = max(Qmatrix[dist])
+        Qmatrix[last][action] = (1 - alpha) * Qmatrix[last][action] + alpha * (reward + gamma * maxnewstate)
+        last = dist  #AJ: this will save the current state as the last state and so in the next frame, the last and current state will be compared. this means it will update whether the bird passed the pipe or collided. 
+
+        if crashTest[0]: #AJ: this check if the bird crashed, and it will return the end of the game data, including the final y position of the bird, the positions of the pipes, the score, and the bird's speed and rotation when it creahsed 
+            return {
+                'y': playery,
+                'groundCrash': crashTest[1],
+                'basex': basex,
+                'upperPipes': upperPipes,
+                'lowerPipes': lowerPipes,
+                'score': score,
+                'playerVelY': playerVelY,
+                'playerRot': playerRot
+            }
+
+        FPSCLOCK.tick(FPS) #AJ: this will allow the game to run so that the frame rate is consistent and the game runs smoothly. 
+
+
+#NAVTEJVIR'S SECTION 
+def showGameOverScreen(crashInfo):
+    """crashes the player down ans shows gameover image"""
+    score = crashInfo['score'] #NKC: From crashInfo dictionary, score value is assigned to display final score to player
+    playerx = SCREENWIDTH * 0.2 #NKC: Bird position is determined to be 20% of screenwidth. Position to left ensures time for user to predict action according to obstacles to the right/ahead.
+    playery = crashInfo['y'] #NKC: Current vertical coordinate of bird in crashInfo recorded prior to crash in order to commence and continue at approperite positon following crash.
+    playerHeight = IMAGES['player'][0].get_height() #NKC: Bird height is determined as the the height of the first bird image in order to determine if bird comes into contact with obstacles.
+    playerVelY = crashInfo['playerVelY'] #NKC: Vertical velocity ensures consistent animation of crash.
+    playerAccY = 2 #NKC: Graviational acceleration to ensure descent of bird. Value of 2 ensures consistent animation with sufficient reaction time for player.
+    playerRot = crashInfo['playerRot'] #NKC: Rotation angle determined from rotation angle of crash.
+    playerVelRot = 7 #NKC: Rotational velocity for consistent animation of loss of control to user.
+
+    basex = crashInfo['basex'] #NKC: Current horizontal coordinate of bird in crashInfo recorded at crash in order to commence and continue at approperiate position following crash.
+
+    upperPipes, lowerPipes = crashInfo['upperPipes'], crashInfo['lowerPipes'] #NKC: Redraw pipes according to positions at the time of the crash.
+
+    # play hit and die sounds
+    SOUNDS['hit'].play() #NKC: 'hit' audio in SOUNDS dictionary played using method.
+    if not crashInfo['groundCrash']: #NKC: Determine if crash with pipe to play approperiate audio.
+        SOUNDS['die'].play() #NKC: 'die' audio in SOUNDS dictionary played using method. Different sound emphazies emotional impact to indicate game loss in contrast to hit.
+
+    while True: #NKC: Initates infinte loop to remain in game-over display until player inputs decision to restart or quit.
+        for event in pygame.event.get(): #NKC: Retrieves and processes all player inputs/actions.
+            if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):#NKC: Player quits (close window, escape key)
+                pygame.quit() #NKC: Closes game
+                sys.exit() #NKC: Exits program
+            if event.type == KEYDOWN and (event.key == K_SPACE or event.key == K_UP): #NKC: Player restarts (space bar, up arrow)
+                if playery + playerHeight >= BASEY - 1: #NKC: Compares vertical coordinate of bird to ground position to ensure restarts following crash/contact with ground.
+                    return #NKC: Exit game-over display to restart
+
+        # player y shift
+        if playery + playerHeight < BASEY - 1: #NKC: Verifies if bird is above ground, so possibility of descent is physically possible.
+            playery += min(playerVelY, BASEY - playery - playerHeight) #NKC: Updates vertical coordinate of bird according to smallest value of either vertical velcoity or distance from ground. Minimum value prevents bird surpassing ground depth.
+
+        # player velocity change
+        if playerVelY < 15: #NKC: Verifies that vertical velocity does not surpass maximum of 15.
+            playerVelY += playerAccY #NKC: Increases vertical velocity by acceleration due to gravity for consistent descent animation.
+
+        # rotate only when it's a pipe crash
+        if not crashInfo['groundCrash']: #NKC: Verifies crash with pipe, so rotation required.
+            if playerRot > -90: #NKC: Verification of current rotation of bird compared with limit of -90 degrees (90 degree rotation clockwise rsults in pointing straight down).
+                playerRot -= playerVelRot #NKC: If rotation surpasses limit, current rotation is reduced by rotation velocity.
+
+        #NKC: Draw sprites (two dimensional image)
+        SCREEN.blit(IMAGES['background'], (0,0)) #NKC: Retrieves background sprite from MEMORY dictionary to display at (0,0) coordinates. Ensures consistent animation between frames.
+
+        for uPipe, lPipe in zip(upperPipes, lowerPipes): #NKC: All pipes redrawn for collision
+            SCREEN.blit(IMAGES['pipe'][0], (uPipe['x'], uPipe['y'])) #NKC: Retrieves pipe sprite from IMAGE dictionary to display at location determined by dictionary values of horizontal and vertical coordinates.
+            SCREEN.blit(IMAGES['pipe'][1], (lPipe['x'], lPipe['y']))
+
+        SCREEN.blit(IMAGES['base'], (basex, BASEY)) #NKC: Redraws ground sprite at horixontal and vertical fixed coordinates.
+        showScore(score) #NKC: Displays current score to player to inform regarding performance.
+
+        playerSurface = pygame.transform.rotate(IMAGES['player'][1], playerRot) #NKC: Current rotation angle applied to bird sprite from IMAGES dictionary.
+        SCREEN.blit(playerSurface, (playerx,playery)) #NKC: Rotated bird sprite displayed at horizontal and vertical coordinates for consistent animation of crash.
+
+        FPSCLOCK.tick(FPS) #NKC: Limits frame display rate so all animations change display smoothly.
+        pygame.display.update() #NKC: Displays updated frame to player.
+
+def playerShm(playerShm):
+    """oscillates the value of playerShm['val'] between 8 and -8"""
+    if abs(playerShm['val']) == 8: #NKC: If oscillation of bird in one direction reaches maximum (-8 or 8), must reverse direction.
+        playerShm['dir'] *= -1 #NKC: Reverses oscillation direction of bird.
+        #NKC: Oscillation provides consistent natural animation of bird movement.
+
+    if playerShm['dir'] == 1: #NKC: Verifies if direction key of playerShm dictionary is up (1).
+         playerShm['val'] += 1 #NKC: Increases vertical displacement by 1, so bird increases vertical position in each frame.
+    else: #NKC: Otherwise (if not moving up), vertical direction of bird is down.
+        playerShm['val'] -= 1 #NKC: Decreases vertical displacement by 1, so bird decreases vertical position in each frame.
+
+def getRandomPipe():
+    """returns a randomly generated pipe"""
+    # y of gap between upper and lower pipe
+    gapY = random.randrange(0, int(BASEY * 0.6 - PIPEGAPSIZE)) #NKC: Generates random vertical position for pipe gap within range of playable area of display.
+    #NKC: Playable area is in vertical range above 60% of ground, accounting for sufficient space for the determined size of the gap.
+    gapY += int(BASEY * 0.2) #lower 0.2~0.8 pipe
+    #NKC: Ensures gap remains within 20% to 80% of screen height for safe passage of bird by player.
+    pipeHeight = IMAGES['pipe'][0].get_height()  #NKC: Retrieves height of pipe sprite to determine correct position on display.
+    pipeX = SCREENWIDTH + 10 #NKC: Positions pipe sprtie beyond screen display boundary towards right to ensure consistent enterance animation during gameplay.
+
+    return [
+        {'x': pipeX, 'y': gapY - pipeHeight},  # upper pipe above gap
+        {'x': pipeX, 'y': gapY + PIPEGAPSIZE}, # lower pipe below gap
+    ]
+
+
+def showScore(score):
+    """displays score in center of screen"""
+    scoreDigits = [int(x) for x in list(str(score))] #NKC: Converts/splits score into list of digits for indvidual display of digits.
+    totalWidth = 0 #NKC: Total width of all numbers to be printed.
+
+    for digit in scoreDigits: #NKC: Calculates total width of score to ensure display in centre.
+        totalWidth += IMAGES['numbers'][digit].get_width() #NKC: Width of each indvidual digit sprite from IMAGES dictionary is summed to determine total width of score.
+
+    Xoffset = (SCREENWIDTH - totalWidth) / 2 #NKC: Calculates horizontal centre position of score by calculating the midpoint between the difference of the screen width and score width.
+
+    for digit in scoreDigits: #NKC: Loop to display each digit.
+        SCREEN.blit(IMAGES['numbers'][digit], (Xoffset, SCREENHEIGHT * 0.1)) #NKC: Displays each digit sprite at the calculated horizontal centre position and fixed vertical position (10% below screen height/top).
+        Xoffset += IMAGES['numbers'][digit].get_width() #NKC: Increases horizontal position by current digit width in order to determine horizontal position of next digit.
+
+
+def checkCrash(player, upperPipes, lowerPipes):
+    """returns True if player collders with base or pipes."""
+    pi = player['index'] #NKC: Current bird animation frame (with regard to wing position) retrieved from player dictionary at time of possible crash.
+    player['w'] = IMAGES['player'][0].get_width() #NKC: Stores width of bird sprite.
+    player['h'] = IMAGES['player'][0].get_height() #NKC: Stores height of bird sprite.
+    #NKC: Note that the dimensions of the bird sprite are recorded in order to determine if the bird overlaps/crashes into other obstacles (the ground or pipes).
+
+    # if player crashes into ground
+    if player['y'] + player['h'] >= BASEY - 1: #NKC: Verifies if the bottom vertical position (top vertical position - height) of the bird sprite is at or surpasses ground depth.
+        return [True, True] #NKC: Crash occurs with ground
+    else:
+        playerRect = pygame.Rect(player['x'], player['y'],
+                      player['w'], player['h']) #NKC: Creates a rectangle commencing at the left horizontal position extended by the width; the top vertical position extended by the height of the bird animation sprite.
+        pipeW = IMAGES['pipe'][0].get_width() #NKC: Retrieves and stores width of pipe sprite from IMAGE dictionary to chcek for overlap indicating crash.
+        pipeH = IMAGES['pipe'][0].get_height() #NKC: Retrieves and stores height of pipe sprite from IMAGE dictionary to chcek for overlap indicating crash.
+
+        for uPipe, lPipe in zip(upperPipes, lowerPipes): #NKC: Multiple assignment enhances efficiency and readability
+            # upper and lower pipe rects
+            uPipeRect = pygame.Rect(uPipe['x'], uPipe['y'], pipeW, pipeH) #NKC: Creates a rectangle commencing at the left horizontal position extended by the width; the top vertical position extended by the height of the upper pipe sprite.
+            lPipeRect = pygame.Rect(lPipe['x'], lPipe['y'], pipeW, pipeH) #NKC: Creates a rectangle commencing at the left horizontal position extended by the width; the top vertical position extended by the height of the lower pipe sprite.
+
+            # player and upper/lower pipe hitmasks
+            #NKC: Hitmasks mark where pixels of sprite are solid vs transparent.
+            pHitMask = HITMASKS['player'][pi]
+            uHitmask = HITMASKS['pipe'][0]
+            lHitmask = HITMASKS['pipe'][1]
+
+            # if bird collided with upipe or lpipe
+            #NKC: As a reuslt, crash is registered according to the overlap of solid pixels of sprites.
+            uCollide = pixelCollision(playerRect, uPipeRect, pHitMask, uHitmask)
+            lCollide = pixelCollision(playerRect, lPipeRect, pHitMask, lHitmask)
+
+            if uCollide or lCollide: #If crash occurs between upper pipe or lower pipe
+                return [True, False] #Crash occurs with pipe (not ground)
+
+    return [False, False] #No crash (with ground or pipe)
+    #NKC: Note that the first boolean value confirms whether a crash has occured or not; whereas, the second boolean value indicates the type of crash.
+
+def pixelCollision(rect1, rect2, hitmask1, hitmask2):
+    """Checks if two objects collide and not just their rects"""
+    rect = rect1.clip(rect2) #NKC: Determines overlap between two rectangles
+
+    if rect.width == 0 or rect.height == 0: #NKC: If either dimension of rectangle are 0, there is no overlap.
+        return False #NKC: No overlap indicates that objects do not collide.
+        
+    #NKC: Positions of overlapping pixels of sprites
+    x1, y1 = rect.x - rect1.x, rect.y - rect1.y
+    x2, y2 = rect.x - rect2.x, rect.y - rect2.y
+
+    for x in xrange(rect.width): #NKC: Scan each overlap pixel horizontally
+        for y in xrange(rect.height): #NKC: Scan each overlap pixel vertically
+            if hitmask1[x1+x][y1+y] and hitmask2[x2+x][y2+y]:
+                return True #NKC: If any pixels of overlap are solid, objects collide.
+    return False #NKC: If any pixels of overlap are transparent, objects do not collide.
+
+def getHitmask(image):
+    """returns a hitmask using an image's alpha."""
+    mask = []
+    for x in xrange(image.get_width()): #NKC: Scan each overlap pixel horizontally
+        mask.append([])
+        for y in xrange(image.get_height()): #NKC: Scan each overlap pixel vertically
+            mask[x].append(bool(image.get_at((x,y))[3]))
+    return mask
+
+if __name__ == '__main__': #NKC: When program is run directly/scripted (not imported) the following is executed:
+    main() #NKC: Main game loop
